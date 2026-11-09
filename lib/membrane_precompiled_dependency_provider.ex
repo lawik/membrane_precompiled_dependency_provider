@@ -6,10 +6,13 @@ defmodule Membrane.PrecompiledDependencyProvider do
   be referred to as generic. Otherwise they will be referred to as non-generic.
   """
 
-  require Logger
-
   @membrane_precompiled_org_url "https://github.com/membraneframework-precompiled"
   @ffmpeg_builds_url "https://github.com/BtbN/FFmpeg-Builds/releases"
+
+  # Version of FFmpeg used when neither the `:version` option nor the config specifies one.
+  # It must be a release hosted in the `membraneframework-precompiled` organization, so that
+  # a build without an explicit version never pulls an unpinned third-party nightly.
+  @default_ffmpeg_version "6.0.1"
 
   @typedoc """
   An atom representing a dependency.
@@ -44,6 +47,13 @@ defmodule Membrane.PrecompiledDependencyProvider do
   For generic dependencies this version needs to be the same as a release name from the
   repository of the precompiled dependency, but without the leading "v". By default the latest
   version is chosen.
+
+  For `:ffmpeg` the version must be one of `known_ffmpeg_versions/0` (or a `major.minor` alias
+  of one of them); an unknown version raises `ArgumentError`. When no version is given,
+  `#{@default_ffmpeg_version}` is used. Passing `"latest"` explicitly selects the newest
+  release, which on Linux is a nightly build of FFmpeg master from a third-party repository
+  (BtbN/FFmpeg-Builds) - a moving target that is not reproducible between builds, so it is
+  only recommended for experiments.
 
   The target platform can be overridden with the `:target` option (a map in the format returned
   by `Bundlex.get_target/0`). By default the platform from which this function is being called
@@ -125,11 +135,15 @@ defmodule Membrane.PrecompiledDependencyProvider do
 
   @spec resolve_version(precompiled_dependency(), version: String.t()) :: String.t()
   defp resolve_version(dependency, opts) do
-    opts_version = Keyword.get(opts, :version, "latest")
+    opts_version = Keyword.get(opts, :version, default_version(dependency))
 
     Application.get_env(:membrane_precompiled_dependency_provider, :versions, [])
     |> Keyword.get(dependency, opts_version)
   end
+
+  @spec default_version(precompiled_dependency()) :: String.t()
+  defp default_version(:ffmpeg), do: @default_ffmpeg_version
+  defp default_version(_generic_dependency), do: "latest"
 
   @spec get_generic_dependency_url_prefix(precompiled_dependency(), String.t()) :: String.t()
   defp get_generic_dependency_url_prefix(dep, version) do
@@ -160,8 +174,10 @@ defmodule Membrane.PrecompiledDependencyProvider do
         "#{@ffmpeg_builds_url}/latest/download/ffmpeg-master-latest-#{platform}-gpl-shared.tar.xz"
 
       true ->
-        Logger.warning("Version #{version} not found, using latest")
-        "#{@ffmpeg_builds_url}/latest/download/ffmpeg-master-latest-#{platform}-gpl-shared.tar.xz"
+        raise ArgumentError, """
+        Unknown FFmpeg version #{inspect(version)}. Known versions are: \
+        #{Enum.map_join(known_ffmpeg_versions(), ", ", &inspect/1)}.
+        """
     end
   end
 end
